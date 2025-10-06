@@ -1,0 +1,16 @@
+{
+  "name": "gcs-push-analytics-to-hubspot",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@google-cloud/bigquery": "^8.1.1",
+    "express": "^5.1.0"
+  }
+}
