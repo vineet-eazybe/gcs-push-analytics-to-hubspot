@@ -11,6 +11,7 @@
   "description": "",
   "dependencies": {
     "@google-cloud/bigquery": "^8.1.1",
+    "axios": "^1.12.2",
     "express": "^5.1.0"
   }
 }
