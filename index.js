@@ -1,5 +1,5 @@
 const express = require('express');
-const { getAllHubspoActiveUsers } = require('./helper');
+const { extractDataFromActiveUsers, processDataToBeSyncedWithHubspot, syncDataWithHubspot } = require('./helper');
 
 const app = express();
 const PORT = process.env.PORT || 3004;
@@ -8,19 +8,56 @@ const PORT = process.env.PORT || 3004;
 app.use(express.json());
 
 // Route to get all active users
-app.get('/active-users', async (req, res) => {
+app.get('/active-users/conversation-summary', async (req, res) => {
     try {
-        const activeUsers = await getAllHubspoActiveUsers();
+        const conversationSummary = await extractDataFromActiveUsers();
         res.json({
             status: true,
-            data: activeUsers,
-            message: 'Active users retrieved successfully'
+            data: conversationSummary,
+            message: 'Conversation summary retrieved successfully'
         });
     } catch (error) {
-        console.error('Error in /active-users route:', error);
+        console.error('Error in /active-users/conversation-summary route:', error);
         res.status(500).json({
             status: false,
-            message: 'Failed to retrieve active users',
+            message: 'Failed to retrieve conversation summary',
+            error: error.message
+        });
+    }
+});
+
+app.get('/active-users/process-data-to-be-synced-with-hubspot', async (req, res) => {
+    try {
+        const data = await processDataToBeSyncedWithHubspot();
+        res.json({
+            status: true,
+            data: data,
+            message: 'Data to be synced with Hubspot retrieved successfully'
+        });
+    } catch (error) {
+        console.error('Error in /active-users/process-data-to-be-synced-with-hubspot route:', error);
+        res.status(500).json({
+            status: false,
+            message: 'Failed to process data to be synced with Hubspot',
+            error: error.message
+        });
+    }
+});
+
+app.get('/active-users/sync-data-with-hubspot', async (req, res) => {
+    try {
+        const data = await syncDataWithHubspot();
+        res.json({
+            status: true,
+            data: data,
+            message: 'Data synced with Hubspot successfully'
+        });
+    }
+    catch (error) {
+        console.error('Error in /active-users/sync-data-with-hubspot route:', error);
+        res.status(500).json({
+            status: false,
+            message: 'Failed to sync data with Hubspot',
             error: error.message
         });
     }
@@ -39,7 +76,9 @@ app.get('/health', (req, res) => {
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
     console.log(`Health check: http://localhost:${PORT}/health`);
-    console.log(`Active users: http://localhost:${PORT}/active-users`);
+    console.log(`Conversation summary: http://localhost:${PORT}/active-users/conversation-summary`);
+    console.log(`Data to be synced with Hubspot: http://localhost:${PORT}/active-users/process-data-to-be-synced-with-hubspot`);
+    console.log(`Sync data with Hubspot: http://localhost:${PORT}/active-users/sync-data-with-hubspot`);
 });
 
 module.exports = app;
