@@ -206,9 +206,18 @@ async function syncDataWithHubspot() {
                     console.log(`Syncing ${chatsWithContacts.length} contacts for UID: ${conversation.uid}`);
                     
                     // Prepare contacts for batch update
+                    const contactsToUpdate = chatsWithContacts.map(chat => ({
+                        id: chat.contactId,
+                        properties: {
+                            // Map to the property names expected by updateHubspotContactsBatch
+                            last_whatsapp_interaction: chat.updated_at,
+                            whatsapp_chat_id: chat.chat_id,
+                            average_response_time: chat.average_response_time
+                        }
+                    }));
                     
                     try {
-                        await updateHubspotContactsBatch(conversation.access_token, chatsWithContacts);
+                        await updateHubspotContactsBatch(conversation.access_token, chatsWithContacts, conversation.refresh_token);
                         console.log(`Successfully synced ${chatsWithContacts.length} contacts for UID: ${conversation.uid}`);
                     } catch (error) {
                         console.error(`Error syncing contacts for UID ${conversation.uid}:`, error.message);

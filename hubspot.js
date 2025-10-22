@@ -268,16 +268,26 @@ async function contactExistanceBulkOnHubspot(accessToken, phoneNumbers = [], ref
  * @param {Array} contacts - Array of contact objects with id and properties
  * @returns {Object} Batch update response
  */
-async function updateHubspotContactsBatch(accessToken, chatData) {
+async function updateHubspotContactsBatch(accessToken, chatData, refreshToken = null) {
     try {
+        // Remove duplicate contact IDs to avoid HubSpot validation errors
+        const uniqueChatData = chatData.reduce((acc, chat) => {
+            if (!acc.find(c => c.contactId === chat.contactId)) {
+                acc.push(chat);
+            }
+            return acc;
+        }, []);
+
+        console.log(`Removed ${chatData.length - uniqueChatData.length} duplicate contacts. Processing ${uniqueChatData.length} unique contacts.`);
+
         // Split chatData into batches of 100
         const batchSize = 100;
         const batches = [];
-        for (let i = 0; i < chatData.length; i += batchSize) {
-            batches.push(chatData.slice(i, i + batchSize));
+        for (let i = 0; i < uniqueChatData.length; i += batchSize) {
+            batches.push(uniqueChatData.slice(i, i + batchSize));
         }
 
-        console.log(`Processing ${chatData.length} contacts in ${batches.length} batches of up to ${batchSize} contacts each`);
+        console.log(`Processing ${uniqueChatData.length} contacts in ${batches.length} batches of up to ${batchSize} contacts each`);
 
         let properties = {
             'eazybe_follow_ups': 0,
@@ -300,21 +310,22 @@ async function updateHubspotContactsBatch(accessToken, chatData) {
             const batch = batches[i];
             console.log(`Processing batch ${i + 1}/${batches.length} with ${batch.length} contacts`);
 
-            try {
-                const batchData = {
-                    inputs: batch.map(chat => ({
-                        id: chat.contactId,
-                        properties: {
-                            ...properties,
-                            'eazybe_total_messages': chat.analytics.total_messages,
-                            'eazybe_messages_received': chat.analytics.messages_received,
-                            'eazybe_messages_sent': chat.analytics.messages_sent,
-                            'eazybe_follow_ups': chat.analytics.number_of_follow_ups,
-                            'eazybe_average_response_time': chat.average_response_time
-                        }
-                    }))
-                };
+            // Define batchData outside try block so it's accessible in catch block
+            const batchData = {
+                inputs: batch.map(chat => ({
+                    id: chat.contactId,
+                    properties: {
+                        ...properties,
+                        'eazybe_total_messages': chat.analytics.total_messages,
+                        'eazybe_messages_received': chat.analytics.messages_received,
+                        'eazybe_messages_sent': chat.analytics.messages_sent,
+                        'eazybe_follow_ups': chat.analytics.number_of_follow_ups,
+                        'eazybe_average_response_time': chat.average_response_time
+                    }
+                }))
+            };
 
+            try {
                 const response = await axios.post('https://api.hubapi.com/crm/v3/objects/contacts/batch/update', batchData, {
                     headers: {
                         'Authorization': `Bearer ${accessToken}`,
@@ -333,14 +344,53 @@ async function updateHubspotContactsBatch(accessToken, chatData) {
 
             } catch (batchError) {
                 console.error(`Error updating batch ${i + 1}:`, batchError.response?.data || batchError.message);
-                // Continue with next batch instead of failing completely
-                continue;
+                
+                // Handle token expiration
+                if (batchError.response?.status === 401) {
+                    console.error('Authentication failed - access token may be invalid or expired');
+                    
+                    // Try to refresh token if refresh token is available
+                    if (refreshToken) {
+                        try {
+                            console.log('Attempting to refresh access token...');
+                            const newTokens = await refreshHubSpotToken(refreshToken);
+                            console.log('Successfully refreshed access token');
+                            
+                            // Retry the current batch with new access token
+                            const retryResponse = await axios.post('https://api.hubapi.com/crm/v3/objects/contacts/batch/update', batchData, {
+                                headers: {
+                                    'Authorization': `Bearer ${newTokens.access_token}`,
+                                    'Content-Type': 'application/json'
+                                }
+                            });
+                            
+                            allResults.push(retryResponse.data);
+                            totalUpdated += batch.length;
+                            console.log(`Successfully updated ${batch.length} contacts in batch ${i + 1} (retry)`);
+                            
+                            // Update access token for remaining batches
+                            accessToken = newTokens.access_token;
+                            
+                        } catch (refreshError) {
+                            console.error('Failed to refresh token:', refreshError.message);
+                            // Continue with next batch instead of failing completely
+                            continue;
+                        }
+                    } else {
+                        console.error('No refresh token available');
+                        // Continue with next batch instead of failing completely
+                        continue;
+                    }
+                } else {
+                    // Continue with next batch for other errors
+                    continue;
+                }
             }
         }
 
-        console.log(`Successfully updated ${totalUpdated} out of ${chatData.length} contacts across ${batches.length} batches`);
+        console.log(`Successfully updated ${totalUpdated} out of ${uniqueChatData.length} contacts across ${batches.length} batches`);
         return {
-            totalProcessed: chatData.length,
+            totalProcessed: uniqueChatData.length,
             totalUpdated: totalUpdated,
             batchesProcessed: batches.length,
             results: allResults
