@@ -71,19 +71,15 @@ app.get('/active-users/sync-data', async (req, res) => {
         let crm = req.query.crm.toLowerCase();
         if (crm === 'hubspot') {
             const data = await syncDataWithHubspot();
-            res.json({
-                status: true,
-                data: data,
-                message: 'Data synced with Hubspot successfully'
-            });
-        } else if (crm === 'zoho') {
+        } 
+        if (crm === 'zoho') {
             const data = await syncDataWithZoho();
-            res.json({
-                status: true,
-                data: data,
-                message: 'Data synced with Zoho successfully'
-            });
         }
+        return res.json({
+            status: true,
+            message: 'Data synced successfully'
+        });
+
     }
     catch (error) {
         console.error('Error in /active-users/sync-data route:', error);
@@ -103,6 +99,8 @@ app.get('/health', (req, res) => {
         timestamp: new Date().toISOString()
     });
 });
+
+
 
 // Start server
 app.listen(PORT, () => {
