@@ -1,5 +1,5 @@
 const express = require('express');
-const { extractDataFromActiveUsers, processDataToBeSyncedWithHubspot, syncDataWithHubspot } = require('./helper');
+const { extractDataFromActiveUsers, processDataToBeSyncedWithHubspot, processDataToBeSyncedWithZoho, syncDataWithHubspot, syncDataWithZoho } = require('./helper');
 
 const app = express();
 const PORT = process.env.PORT || 3004;
@@ -26,38 +26,70 @@ app.get('/active-users/conversation-summary', async (req, res) => {
     }
 });
 
-app.get('/active-users/process-data-to-be-synced-with-hubspot', async (req, res) => {
+app.get('/active-users/process-data-to-be-synced', async (req, res) => {
     try {
-        const data = await processDataToBeSyncedWithHubspot();
-        res.json({
-            status: true,
-            data: data,
-            message: 'Data to be synced with Hubspot retrieved successfully'
-        });
+        if (!req.query.crm) {
+            return res.status(400).json({
+                status: false,
+                message: 'Missing required query parameter: crm (expected: hubspot or zoho)'
+            });
+        }
+        let crm = req.query.crm.toLowerCase();
+        if (crm === 'hubspot') {
+            const data = await processDataToBeSyncedWithHubspot();
+            res.json({
+                status: true,
+                data: data,
+                message: 'Data to be synced with Hubspot retrieved successfully'
+            });
+        } else if (crm === 'zoho') {
+            const data = await processDataToBeSyncedWithZoho();
+            res.json({
+                status: true,
+                data: data,
+                message: 'Data to be synced with Zoho retrieved successfully'
+            });
+        }
     } catch (error) {
-        console.error('Error in /active-users/process-data-to-be-synced-with-hubspot route:', error);
+        console.error('Error in /active-users/process-data-to-be-synced route:', error);
         res.status(500).json({
             status: false,
-            message: 'Failed to process data to be synced with Hubspot',
+            message: 'Failed to process data to be synced',
             error: error.message
         });
     }
 });
 
-app.get('/active-users/sync-data-with-hubspot', async (req, res) => {
+app.get('/active-users/sync-data', async (req, res) => {
     try {
-        const data = await syncDataWithHubspot();
-        res.json({
-            status: true,
-            data: data,
-            message: 'Data synced with Hubspot successfully'
-        });
+        if (!req.query.crm) {
+            return res.status(400).json({
+                status: false,
+                message: 'Missing required query parameter: crm (expected: hubspot or zoho)'
+            });
+        }
+        let crm = req.query.crm.toLowerCase();
+        if (crm === 'hubspot') {
+            const data = await syncDataWithHubspot();
+            res.json({
+                status: true,
+                data: data,
+                message: 'Data synced with Hubspot successfully'
+            });
+        } else if (crm === 'zoho') {
+            const data = await syncDataWithZoho();
+            res.json({
+                status: true,
+                data: data,
+                message: 'Data synced with Zoho successfully'
+            });
+        }
     }
     catch (error) {
-        console.error('Error in /active-users/sync-data-with-hubspot route:', error);
+        console.error('Error in /active-users/sync-data route:', error);
         res.status(500).json({
             status: false,
-            message: 'Failed to sync data with Hubspot',
+            message: 'Failed to sync data',
             error: error.message
         });
     }
@@ -79,6 +111,8 @@ app.listen(PORT, () => {
     console.log(`Conversation summary: http://localhost:${PORT}/active-users/conversation-summary`);
     console.log(`Data to be synced with Hubspot: http://localhost:${PORT}/active-users/process-data-to-be-synced-with-hubspot`);
     console.log(`Sync data with Hubspot: http://localhost:${PORT}/active-users/sync-data-with-hubspot`);
+    console.log(`Data to be synced with Zoho: http://localhost:${PORT}/active-users/process-data-to-be-synced-with-zoho`);
+    console.log(`Sync data with Zoho: http://localhost:${PORT}/active-users/sync-data-with-zoho`);
 });
 
 module.exports = app;

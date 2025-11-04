@@ -2,48 +2,8 @@ const axios = require('axios');
 const dotenv = require('dotenv');
 const { generatePhoneNumberVariations } = require('./phoneNumberParsing');
 dotenv.config();
-async function getAllHubspoActiveUsers() {
-    try {
-        const response = await axios.get('https://dev.eazybe.com/v2/hubspot/active-users', {
-            headers: {
-                'x-gcs-signature': '1234567890',
-                'Content-Type': 'application/json'
-            }
-        });
-        
-        // console.log('Active users data:', response.data.data);
-        return response.data.data;
-    } catch (error) {
-        console.error('Error fetching active users:', error.response?.data || error.message);
-        throw error;
-    }
-}
 
-async function refreshHubSpotToken(refreshToken) {
-    try {
-        const response = await axios.post('https://api.hubapi.com/oauth/v1/token', {
-            grant_type: 'refresh_token',
-            refresh_token: refreshToken,
-            client_id: process.env.HS_CLIENT_ID,
-            client_secret: process.env.HS_CLIENT_SECRET
-        }, {
-            headers: {
-                'Content-Type': 'application/x-www-form-urlencoded'
-            }
-        });
-        
-        return {
-            access_token: response.data.access_token,
-            refresh_token: response.data.refresh_token,
-            expires_in: response.data.expires_in
-        };
-    } catch (error) {
-        console.error('Error refreshing HubSpot token:', error.response?.data || error.message);
-        throw error;
-    }
-}
-
-async function contactExistanceBulkOnHubspot(accessToken, phoneNumbers = [], refreshToken = null) {
+async function contactExistanceBulkOnHubspot(accessToken, phoneNumbers = []) {
     try {
         // Create a mapping of original phone numbers to their variations
         const phoneToVariationsMap = {};
@@ -161,47 +121,9 @@ async function contactExistanceBulkOnHubspot(accessToken, phoneNumbers = [], ref
                 
             } catch (batchError) {
                 console.error(`Error in batch ${i + 1}:`, batchError.message);
-                if (batchError.response?.status === 401) {
-                    console.error('Authentication failed - access token may be invalid or expired');
-                    console.error('Response data:', batchError.response?.data);
-                    
-                    // Try to refresh token if refresh token is available
-                    if (refreshToken) {
-                        try {
-                            console.log('Attempting to refresh access token...');
-                            const newTokens = await refreshHubSpotToken(refreshToken);
-                            console.log('Successfully refreshed access token');
-                            
-                            // Retry the current batch with new access token
-                            const retryResponse = await axios.post('https://api.hubapi.com/crm/v3/objects/contacts/search', searchRequest, {
-                                headers: {
-                                    'Authorization': `Bearer ${newTokens.access_token}`,
-                                    'Content-Type': 'application/json'
-                                }
-                            });
-                            
-                            if (retryResponse.data.results && retryResponse.data.results.length > 0) {
-                                allContacts.push(...retryResponse.data.results);
-                                console.log(`Batch ${i + 1} (retry) found ${retryResponse.data.results.length} contacts`);
-                            } else {
-                                console.log(`Batch ${i + 1} (retry) found 0 contacts`);
-                            }
-                            
-                            // Update access token for remaining batches
-                            accessToken = newTokens.access_token;
-                            
-                        } catch (refreshError) {
-                            console.error('Failed to refresh token:', refreshError.message);
-                            throw batchError; // Re-throw original 401 error
-                        }
-                    } else {
-                        console.error('No refresh token available');
-                        throw batchError;
-                    }
-                } else {
-                    // Continue with next batch for other errors
-                    continue;
-                }
+                console.error('Error details:', batchError.response?.data);
+                // Continue with next batch
+                continue;
             }
         }
         
@@ -268,7 +190,7 @@ async function contactExistanceBulkOnHubspot(accessToken, phoneNumbers = [], ref
  * @param {Array} contacts - Array of contact objects with id and properties
  * @returns {Object} Batch update response
  */
-async function updateHubspotContactsBatch(accessToken, chatData, refreshToken = null) {
+async function updateHubspotContactsBatch(accessToken, chatData) {
     try {
         // Remove duplicate contact IDs to avoid HubSpot validation errors
         const uniqueChatData = chatData.reduce((acc, chat) => {
@@ -344,47 +266,8 @@ async function updateHubspotContactsBatch(accessToken, chatData, refreshToken = 
 
             } catch (batchError) {
                 console.error(`Error updating batch ${i + 1}:`, batchError.response?.data || batchError.message);
-                
-                // Handle token expiration
-                if (batchError.response?.status === 401) {
-                    console.error('Authentication failed - access token may be invalid or expired');
-                    
-                    // Try to refresh token if refresh token is available
-                    if (refreshToken) {
-                        try {
-                            console.log('Attempting to refresh access token...');
-                            const newTokens = await refreshHubSpotToken(refreshToken);
-                            console.log('Successfully refreshed access token');
-                            
-                            // Retry the current batch with new access token
-                            const retryResponse = await axios.post('https://api.hubapi.com/crm/v3/objects/contacts/batch/update', batchData, {
-                                headers: {
-                                    'Authorization': `Bearer ${newTokens.access_token}`,
-                                    'Content-Type': 'application/json'
-                                }
-                            });
-                            
-                            allResults.push(retryResponse.data);
-                            totalUpdated += batch.length;
-                            console.log(`Successfully updated ${batch.length} contacts in batch ${i + 1} (retry)`);
-                            
-                            // Update access token for remaining batches
-                            accessToken = newTokens.access_token;
-                            
-                        } catch (refreshError) {
-                            console.error('Failed to refresh token:', refreshError.message);
-                            // Continue with next batch instead of failing completely
-                            continue;
-                        }
-                    } else {
-                        console.error('No refresh token available');
-                        // Continue with next batch instead of failing completely
-                        continue;
-                    }
-                } else {
-                    // Continue with next batch for other errors
-                    continue;
-                }
+                // Continue with next batch
+                continue;
             }
         }
 
@@ -404,8 +287,6 @@ async function updateHubspotContactsBatch(accessToken, chatData, refreshToken = 
 
 
 module.exports = {
-    getAllHubspoActiveUsers,
-    refreshHubSpotToken,
     contactExistanceBulkOnHubspot,
     updateHubspotContactsBatch
 };

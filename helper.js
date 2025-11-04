@@ -1,11 +1,34 @@
 const axios = require('axios');
 const { BigQuery } = require('@google-cloud/bigquery');
-const { contactExistanceBulkOnHubspot, getAllHubspoActiveUsers, updateHubspotContactsBatch } = require('./hubspot');
+const { contactExistanceBulkOnHubspot, updateHubspotContactsBatch } = require('./hubspot');
+const { contactExistanceBulkOnZoho, updateZohoContactsBatch } = require('./zoho');
 
 const bigquery = new BigQuery({
     credentials: require('./gcp-key.json')
 });
 
+// Fetch active users for specified CRM(s)
+async function getActiveUsers(crms) {
+    try {
+        // Convert array to comma-separated string if it's an array
+        const crmParam = Array.isArray(crms) ? crms.join(',') : crms;
+        
+        const response = await axios.get('https://dev.eazybe.com/v2/common/active-users', {
+            params: {
+                crm: crmParam
+            },
+            headers: {
+                'x-gcs-signature': '1234567890',
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        return response.data.data;
+    } catch (error) {
+        console.error(`Error fetching active users for ${crmParam}:`, error.response?.data || error.message);
+        throw error;
+    }
+}
 
 // Helper function to split array into batches
 function chunkArray(array, chunkSize) {
@@ -18,7 +41,18 @@ function chunkArray(array, chunkSize) {
 
 async function extractDataFromActiveUsers(batchSize = 25) {
     try {
-        const {activeUsersWithScalerPlan} = await getAllHubspoActiveUsers();
+        let crms = ['hubspot', 'zoho'];
+        let activeUsersData = await getActiveUsers(crms);
+
+        // Extract CRM-wise users from the response
+        const hubspotData = activeUsersData.crmWiseData.find(data => data.crm === 'hubspot');
+        const zohoData = activeUsersData.crmWiseData.find(data => data.crm === 'zoho');
+        
+        const hubspotUsers = hubspotData ? hubspotData.activeUsersWithScalerPlan : [];
+        const zohoUsers = zohoData ? zohoData.activeUsersWithScalerPlan : [];
+
+        // Combine all users for BigQuery processing
+        const activeUsersWithScalerPlan = [...hubspotUsers, ...zohoUsers];
 
         // activeUsers is an array of objects with the following structure:
         // {
@@ -27,7 +61,7 @@ async function extractDataFromActiveUsers(batchSize = 25) {
         //     refresh_token: string
         // }
 
-        console.log(`Processing ${activeUsersWithScalerPlan.length} active users in batches of ${batchSize}`);
+        console.log(`Processing ${activeUsersWithScalerPlan.length} active users (${hubspotUsers.length} HubSpot, ${zohoUsers.length} Zoho) in batches of ${batchSize}`);
 
         // Split active users into batches
         const userBatches = chunkArray(activeUsersWithScalerPlan, batchSize);
@@ -41,7 +75,8 @@ async function extractDataFromActiveUsers(batchSize = 25) {
             try {
                 // Create a more efficient query using parameterized queries
                 // Ensure workspace_ids are strings to match the uid column type
-                const workspaceIds = batch.map(user => String(user.workspace_id));
+                // Use Set to remove duplicates, then convert to array
+                const workspaceIds = [...new Set(batch.map(user => String(user.workspace_id)))];
                 
                 const query = {
                     query: `
@@ -90,7 +125,8 @@ async function extractDataFromActiveUsers(batchSize = 25) {
         console.log(`Total records retrieved: ${allResults.length}`);
         return {
             conversationSummary: allResults,
-            activeHubspotUsers: activeUsersWithScalerPlan
+            activeHubspotUsers: hubspotUsers,
+            activeZohoUsers: zohoUsers
         };
         
     } catch (error) {
@@ -101,7 +137,7 @@ async function extractDataFromActiveUsers(batchSize = 25) {
 
 async function processDataToBeSyncedWithHubspot() {
     try {
-        const { conversationSummary, activeHubspotUsers } = await extractDataFromActiveUsers();
+        const { conversationSummary, activeHubspotUsers } = await extractDataFromActiveUsers(25);
         
         // Create maps of workspace_id to tokens for quick lookup
         const accessTokenMap = activeHubspotUsers.reduce((acc, user) => {
@@ -147,8 +183,7 @@ async function processDataToBeSyncedWithHubspot() {
                     try {
                         const result = await contactExistanceBulkOnHubspot(
                             conversation.access_token, 
-                            conversation.chats.map(chat => chat.chat_id.split('@')[0]),
-                            conversation.refresh_token
+                            conversation.chats.map(chat => chat.chat_id.split('@')[0])
                         );
                         
                         console.log('Found contacts:', Object.keys(result.chatIdToContactIdMap).length);
@@ -193,6 +228,99 @@ async function processDataToBeSyncedWithHubspot() {
     }
 }
 
+async function processDataToBeSyncedWithZoho() {
+    try {
+        const { conversationSummary, activeZohoUsers } = await extractDataFromActiveUsers(25);
+        
+        // Create maps of workspace_id to tokens and api domain for quick lookup
+        const accessTokenMap = activeZohoUsers.reduce((acc, user) => {
+            acc[user.workspace_id] = user.access_token;
+            return acc;
+        }, {});
+        
+        const apiDomainMap = activeZohoUsers.reduce((acc, user) => {
+            acc[user.workspace_id] = user.api_domain || 'https://www.zohoapis.com';
+            return acc;
+        }, {});
+        
+        // Group conversation summary by uid - each uid will contain all chats for that user
+        const conversationSummaryByUid = conversationSummary.reduce((acc, curr) => {
+            if (!acc[curr.uid]) {
+                acc[curr.uid] = {
+                    uid: curr.uid,
+                    org_id: curr.org_id,
+                    access_token: accessTokenMap[curr.uid] || null,
+                    api_domain: apiDomainMap[curr.uid] || 'https://www.zohoapis.com',
+                    chats: []
+                };
+            }
+            acc[curr.uid].chats.push({
+                chat_id: curr.chat_id,
+                analytics: curr.analytics,
+                average_response_time: curr.average_response_time,
+                created_at: curr.created_at,
+                updated_at: curr.updated_at
+            });
+            return acc;
+        }, {});
+        
+        // Convert to array format
+        const conversationSummaryArray = Object.values(conversationSummaryByUid);
+        
+        // Process each conversation to add contactId information
+        try {
+            for (const conversation of conversationSummaryArray) {
+                if (conversation.access_token) {
+                    console.log('fetching zoho contacts for uid: ', conversation.uid);
+                    
+                    try {
+                        const result = await contactExistanceBulkOnZoho(
+                            conversation.access_token, 
+                            conversation.chats.map(chat => chat.chat_id.split('@')[0]),
+                            conversation.api_domain
+                        );
+                        
+                        console.log('Found contacts:', Object.keys(result.chatIdToContactIdMap).length);
+                        
+                        // Add contactId to each chat in the conversation
+                        conversation.chats.forEach(chat => {
+                            const phoneNumber = chat.chat_id.split('@')[0];
+                            const contactInfo = result.chatIdToContactIdMap[phoneNumber];
+                            chat.contactId = contactInfo ? contactInfo.contactId : null;
+                        });
+                        
+                    } catch (error) {
+                        console.error('Error for UID', conversation.uid, ':', error.message);
+                        if (error.response?.status === 401) {
+                            console.error('Authentication failed - access token may be invalid or expired');
+                        }
+                        
+                        // Set contactId to null for all chats in this conversation if there's an error
+                        conversation.chats.forEach(chat => {
+                            chat.contactId = null;
+                        });
+                    }
+                } else {
+                    // Set contactId to null for all chats if no access token
+                    conversation.chats.forEach(chat => {
+                        chat.contactId = null;
+                    });
+                }
+            }
+        } catch (error) {
+            console.error('Error fetching zoho contacts:', error.response?.data || error.message);
+            throw error;
+        }
+        
+        // Return the modified conversationSummaryArray with contactId information
+        return conversationSummaryArray;
+
+    } catch (error) {
+        console.error('Error processing data to be synced with Zoho:', error.response?.data || error.message);
+        throw error;
+    }
+}
+
 async function syncDataWithHubspot() {
     try {
         const conversationSummaryArray = await processDataToBeSyncedWithHubspot();
@@ -205,19 +333,8 @@ async function syncDataWithHubspot() {
                 if (chatsWithContacts.length > 0) {
                     console.log(`Syncing ${chatsWithContacts.length} contacts for UID: ${conversation.uid}`);
                     
-                    // Prepare contacts for batch update
-                    const contactsToUpdate = chatsWithContacts.map(chat => ({
-                        id: chat.contactId,
-                        properties: {
-                            // Map to the property names expected by updateHubspotContactsBatch
-                            last_whatsapp_interaction: chat.updated_at,
-                            whatsapp_chat_id: chat.chat_id,
-                            average_response_time: chat.average_response_time
-                        }
-                    }));
-                    
                     try {
-                        await updateHubspotContactsBatch(conversation.access_token, chatsWithContacts, conversation.refresh_token);
+                        await updateHubspotContactsBatch(conversation.access_token, chatsWithContacts);
                         console.log(`Successfully synced ${chatsWithContacts.length} contacts for UID: ${conversation.uid}`);
                     } catch (error) {
                         console.error(`Error syncing contacts for UID ${conversation.uid}:`, error.message);
@@ -233,9 +350,44 @@ async function syncDataWithHubspot() {
     }
 }
 
+async function syncDataWithZoho() {
+    try {
+        const conversationSummaryArray = await processDataToBeSyncedWithZoho();
+        
+        for (const conversation of conversationSummaryArray) {
+            if (conversation.access_token && conversation.chats.length > 0) {
+                // Filter chats that have contactId
+                const chatsWithContacts = conversation.chats.filter(chat => chat.contactId);
+                
+                if (chatsWithContacts.length > 0) {
+                    console.log(`Syncing ${chatsWithContacts.length} contacts for UID: ${conversation.uid}`);
+                    
+                    try {
+                        await updateZohoContactsBatch(
+                            conversation.access_token, 
+                            chatsWithContacts, 
+                            conversation.api_domain
+                        );
+                        console.log(`Successfully synced ${chatsWithContacts.length} contacts for UID: ${conversation.uid}`);
+                    } catch (error) {
+                        console.error(`Error syncing contacts for UID ${conversation.uid}:`, error.message);
+                        // Continue with next conversation instead of failing completely
+                        continue;
+                    }
+                }
+            }
+        }
+    } catch (error) {
+        console.error('Error syncing data with Zoho:', error.response?.data || error.message);
+        throw error;
+    }
+}
+
 
 module.exports = {
     extractDataFromActiveUsers,
     processDataToBeSyncedWithHubspot,
-    syncDataWithHubspot
+    processDataToBeSyncedWithZoho,
+    syncDataWithHubspot,
+    syncDataWithZoho
 };
