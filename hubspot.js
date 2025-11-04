@@ -1,6 +1,7 @@
 const axios = require('axios');
 const dotenv = require('dotenv');
 const { generatePhoneNumberVariations } = require('./phoneNumberParsing');
+const { logWebhookSiteConfig } = require('./webhookSiteConfig');
 dotenv.config();
 
 async function contactExistanceBulkOnHubspot(accessToken, phoneNumbers = []) {
@@ -100,6 +101,14 @@ async function contactExistanceBulkOnHubspot(accessToken, phoneNumbers = []) {
             };
             
             try {
+                // Log the search request
+                logWebhookSiteConfig({
+                    operation: 'HubSpot Contact Search',
+                    batch: `${i + 1}/${batches.length}`,
+                    phoneCount: batch.length,
+                    searchRequest: searchRequest
+                });
+
                 const response = await axios.post('https://api.hubapi.com/crm/v3/objects/contacts/search', searchRequest, {
                     headers: {
                         'Authorization': `Bearer ${accessToken}`,
@@ -110,6 +119,14 @@ async function contactExistanceBulkOnHubspot(accessToken, phoneNumbers = []) {
                 if (response.data.results && response.data.results.length > 0) {
                     allContacts.push(...response.data.results);
                     console.log(`Batch ${i + 1} found ${response.data.results.length} contacts`);
+                    
+                    // Log the search response
+                    logWebhookSiteConfig({
+                        operation: 'HubSpot Contact Search Response',
+                        batch: `${i + 1}/${batches.length}`,
+                        foundContacts: response.data.results.length,
+                        contacts: response.data.results
+                    });
                 } else {
                     console.log(`Batch ${i + 1} found 0 contacts`);
                 }
@@ -248,6 +265,14 @@ async function updateHubspotContactsBatch(accessToken, chatData) {
             };
 
             try {
+                // Log the batch update request
+                logWebhookSiteConfig({
+                    operation: 'HubSpot Batch Update Request',
+                    batch: `${i + 1}/${batches.length}`,
+                    contactCount: batch.length,
+                    batchData: batchData
+                });
+
                 const response = await axios.post('https://api.hubapi.com/crm/v3/objects/contacts/batch/update', batchData, {
                     headers: {
                         'Authorization': `Bearer ${accessToken}`,
@@ -258,6 +283,14 @@ async function updateHubspotContactsBatch(accessToken, chatData) {
                 allResults.push(response.data);
                 totalUpdated += batch.length;
                 console.log(`Successfully updated ${batch.length} contacts in batch ${i + 1}`);
+
+                // Log the batch update response
+                logWebhookSiteConfig({
+                    operation: 'HubSpot Batch Update Response',
+                    batch: `${i + 1}/${batches.length}`,
+                    updatedCount: batch.length,
+                    response: response.data
+                });
 
                 // Add delay between batches to avoid rate limiting
                 if (i < batches.length - 1) {
@@ -272,6 +305,15 @@ async function updateHubspotContactsBatch(accessToken, chatData) {
         }
 
         console.log(`Successfully updated ${totalUpdated} out of ${uniqueChatData.length} contacts across ${batches.length} batches`);
+
+        logWebhookSiteConfig({
+            operation: 'HubSpot Batch Update Response',
+            totalUpdated: totalUpdated,
+            totalProcessed: uniqueChatData.length,
+            batchesProcessed: batches.length,
+            results: allResults
+        });
+
         return {
             totalProcessed: uniqueChatData.length,
             totalUpdated: totalUpdated,
