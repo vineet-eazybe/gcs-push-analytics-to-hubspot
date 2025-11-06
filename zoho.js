@@ -1,6 +1,7 @@
 const axios = require('axios');
 const dotenv = require('dotenv');
 const { generatePhoneNumberVariations } = require('./phoneNumberParsing');
+const { logWebhookSiteConfig } = require('./webhookSiteConfig');
 dotenv.config();
 
 /**
@@ -273,6 +274,14 @@ async function updateZohoContactsBatch(accessToken, chatData, apiDomain = 'https
             };
 
             try {
+                // Log the batch update request
+                logWebhookSiteConfig({
+                    operation: 'Zoho Batch Update Request',
+                    batch: `${i + 1}/${batches.length}`,
+                    contactCount: batch.length,
+                    batchData: batchData
+                });
+
                 const response = await axios.put(`${apiDomain}/crm/v2/Contacts`, batchData, {
                     headers: {
                         'Authorization': `Zoho-oauthtoken ${accessToken}`,
@@ -283,6 +292,14 @@ async function updateZohoContactsBatch(accessToken, chatData, apiDomain = 'https
                 allResults.push(response.data);
                 totalUpdated += batch.length;
                 console.log(`Successfully updated ${batch.length} contacts in batch ${i + 1}`);
+
+                // Log the batch update response
+                logWebhookSiteConfig({
+                    operation: 'Zoho Batch Update Response',
+                    batch: `${i + 1}/${batches.length}`,
+                    updatedCount: batch.length,
+                    response: response.data
+                });
 
                 // Add delay between batches to avoid rate limiting
                 if (i < batches.length - 1) {
@@ -297,6 +314,19 @@ async function updateZohoContactsBatch(accessToken, chatData, apiDomain = 'https
         }
 
         console.log(`Successfully updated ${totalUpdated} out of ${uniqueChatData.length} contacts across ${batches.length} batches`);
+        
+        // Log final summary
+        logWebhookSiteConfig({
+            operation: 'Zoho Batch Update Complete',
+            summary: {
+                totalProcessed: uniqueChatData.length,
+                totalUpdated: totalUpdated,
+                batchesProcessed: batches.length,
+                successRate: `${((totalUpdated / uniqueChatData.length) * 100).toFixed(2)}%`
+            },
+            timestamp: new Date().toISOString()
+        });
+        
         return {
             totalProcessed: uniqueChatData.length,
             totalUpdated: totalUpdated,
