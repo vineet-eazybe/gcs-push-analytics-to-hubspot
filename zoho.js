@@ -3,6 +3,51 @@ const dotenv = require('dotenv');
 const { generatePhoneNumberVariations } = require('./phoneNumberParsing');
 dotenv.config();
 
+/**
+ * Get all fields for Contacts module in Zoho
+ * @param {string} accessToken - Zoho access token
+ * @param {string} apiDomain - Zoho API domain
+ */
+async function getZohoContactFields(accessToken, apiDomain = 'https://www.zohoapis.com') {
+    try {
+        const response = await axios.get(`${apiDomain}/crm/v2/settings/fields?module=Contacts`, {
+            headers: {
+                'Authorization': `Zoho-oauthtoken ${accessToken}`,
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        // Filter to only show custom fields related to analytics
+        const analyticsFields = response.data.fields.filter(field => 
+            field.api_name && (
+                field.api_name.toLowerCase().includes('message') ||
+                field.api_name.toLowerCase().includes('response') ||
+                field.api_name.toLowerCase().includes('follow') ||
+                field.api_name.toLowerCase().includes('interaction') ||
+                field.api_name.toLowerCase().includes('client') ||
+                field.api_name.toLowerCase().includes('avg') ||
+                field.api_name.toLowerCase().includes('inbound') ||
+                field.api_name.toLowerCase().includes('outbound')
+            )
+        );
+        
+        console.log('\n========== ZOHO ANALYTICS FIELDS ==========');
+        analyticsFields.forEach(field => {
+            console.log(`Field: ${field.field_label}`);
+            console.log(`  API Name: ${field.api_name}`);
+            console.log(`  Data Type: ${field.data_type}`);
+            console.log(`  Custom: ${field.custom_field || false}`);
+            console.log('---');
+        });
+        console.log('==========================================\n');
+        
+        return analyticsFields;
+    } catch (error) {
+        console.error('Error fetching Zoho fields:', error.response?.data || error.message);
+        throw error;
+    }
+}
+
 async function contactExistanceBulkOnZoho(accessToken, phoneNumbers = [], apiDomain = 'https://www.zohoapis.com') {
     try {
         if (phoneNumbers.length === 0) {
@@ -164,19 +209,67 @@ async function updateZohoContactsBatch(accessToken, chatData, apiDomain = 'https
 
             // Define batchData outside try block so it's accessible in catch block
             const batchData = {
-                data: batch.map(chat => ({
-                    id: chat.contactId,
-                    Eazybe_Follow_ups: 0,
-                    Eazybe_Messages_Received: 0,
-                    Eazybe_Messages_Sent: 0,
-                    Eazybe_Messages_You_Got: 0,
-                    Eazybe_Messages_You_Sent: 0,
-                    Eazybe_Total_Messages: chat.analytics.total_messages,
-                    Eazybe_First_Response_Time: 0,
-                    Eazybe_Average_Response_Time: chat.average_response_time,
-                    Eazybe_Time_Since_Last_Client_Message: 0,
-                    Eazybe_Last_Message_Send_By: 0
-                }))
+                data: batch.map(chat => {
+                    // Parse analytics if it's a JSON string
+                    let analytics = chat.analytics;
+                    if (typeof analytics === 'string') {
+                        try {
+                            analytics = JSON.parse(analytics);
+                        } catch (e) {
+                            console.error('Error parsing analytics JSON:', e.message);
+                            analytics = {};
+                        }
+                    }
+                    // Ensure analytics is an object
+                    if (!analytics || typeof analytics !== 'object') {
+                        analytics = {};
+                    }
+                    
+                    // Helper function to safely parse date
+                    const parseDate = (dateValue) => {
+                        if (!dateValue) return null;
+                        try {
+                            // Handle BigQuery timestamp format (object with value property)
+                            if (dateValue && typeof dateValue === 'object' && dateValue.value) {
+                                dateValue = dateValue.value;
+                            }
+                            const date = new Date(dateValue);
+                            return isNaN(date.getTime()) ? null : date;
+                        } catch (e) {
+                            console.error('Error parsing date:', dateValue, e.message);
+                            return null;
+                        }
+                    };
+                    
+                    // Calculate time since last client message (in hours)
+                    let timeSinceLastMessage = null;
+                    const updatedDate = parseDate(chat.updated_at);
+                    if (updatedDate) {
+                        timeSinceLastMessage = Math.floor((Date.now() - updatedDate.getTime()) / (1000 * 60 * 60));
+                    }
+                    
+                    // Format average response time for display (convert minutes to hours)
+                    const avgResponseTimeText = chat.average_response_time 
+                        ? `${(chat.average_response_time / 60).toFixed(2)} hours`
+                        : 'N/A';
+                    
+                    // Format last interaction date
+                    const lastInteractionDate = updatedDate ? updatedDate.toISOString().split('T')[0] : null;
+                    
+                    return {
+                        id: chat.contactId,
+                        // Use exact API names from Zoho
+                        messagesreceived: parseInt(analytics.messages_received) || 0,
+                        messagessent: parseInt(analytics.messages_sent) || 0,
+                        totalmessages: parseInt(analytics.total_messages) || 0,
+                        Follow_ups_Count: parseInt(analytics.number_of_follow_ups) || 0,
+                        Last_Interaction_Date: lastInteractionDate,
+                        Average_Response_Time: avgResponseTimeText,
+                        Time_Since_Last_Client_Message: timeSinceLastMessage ? `${timeSinceLastMessage} hours ago` : 'N/A',
+                        First_Response_Time: 'N/A',  // Not available in current data
+                        Last_Message_send_by: 'N/A'  // Not available in current data
+                    };
+                })
             };
 
             try {
