@@ -2,6 +2,7 @@ const axios = require('axios');
 const { BigQuery } = require('@google-cloud/bigquery');
 const { contactExistanceBulkOnHubspot, updateHubspotContactsBatch } = require('./hubspot');
 const { contactExistanceBulkOnZoho, updateZohoContactsBatch } = require('./zoho');
+const { retryWithBackoff } = require('./utils');
 
 const bigquery = new BigQuery({
     credentials: require('./gcp-key.json')
@@ -177,7 +178,7 @@ async function processDataToBeSyncedWithHubspot() {
         // Process each conversation to add contactId information
         try {
             for (const conversation of conversationSummaryArray) {
-                if (conversation.access_token) {
+                if (conversation.access_token && conversation.uid === '1175482') {
                     console.log('fetching hubspot contacts for uid: ', conversation.uid);
                     
                     try {
@@ -382,7 +383,6 @@ async function syncDataWithZoho() {
         throw error;
     }
 }
-
 
 module.exports = {
     extractDataFromActiveUsers,

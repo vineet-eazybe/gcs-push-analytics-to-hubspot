@@ -107,10 +107,10 @@ app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
     console.log(`Health check: http://localhost:${PORT}/health`);
     console.log(`Conversation summary: http://localhost:${PORT}/active-users/conversation-summary`);
-    console.log(`Data to be synced with Hubspot: http://localhost:${PORT}/active-users/process-data-to-be-synced-with-hubspot`);
-    console.log(`Sync data with Hubspot: http://localhost:${PORT}/active-users/sync-data-with-hubspot`);
-    console.log(`Data to be synced with Zoho: http://localhost:${PORT}/active-users/process-data-to-be-synced-with-zoho`);
-    console.log(`Sync data with Zoho: http://localhost:${PORT}/active-users/sync-data-with-zoho`);
+    console.log(`Data to be synced with Hubspot: http://localhost:${PORT}/active-users/process-data-to-be-synced?crm=hubspot`);
+    console.log(`Sync data with Hubspot: http://localhost:${PORT}/active-users/sync-data?crm=hubspot`);
+    console.log(`Data to be synced with Zoho: http://localhost:${PORT}/active-users/process-data-to-be-synced?crm=zoho`);
+    console.log(`Sync data with Zoho: http://localhost:${PORT}/active-users/sync-data?crm=zoho`);
 });
 
 module.exports = app;
