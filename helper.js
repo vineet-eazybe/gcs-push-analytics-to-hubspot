@@ -178,7 +178,7 @@ async function processDataToBeSyncedWithHubspot() {
         // Process each conversation to add contactId information
         try {
             for (const conversation of conversationSummaryArray) {
-                if (conversation.access_token && conversation.uid === '1175482') {
+                if (conversation.access_token) {
                     console.log('fetching hubspot contacts for uid: ', conversation.uid);
                     
                     try {
